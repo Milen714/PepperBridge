@@ -1,176 +1,152 @@
+# Python 2.7 NAOqi host. One backend TCP socket, separate ESP32 TCP client.
+import logging
+import os
 import socket
-import json
 import threading
-import sys
-import unicodedata
-from naoqi import ALBroker
+import traceback
+
+from bridge_protocol import send_frame, recv_frame, decode_json
+from esp32_audio_client import ESP32AudioClient
 from pepper_controller import PepperController
 
-# --- CONFIGURATION ---
-PEPPER_IP = "192.168.1.122"  # Replace with Pepper's actual Wi-Fi IP
-# PEPPER_IP = "127.0.0.1"  # Replace with Pepper's actual Wi-Fi IP
-PEPPER_PORT = 9559
-BRIDGE_HOST = "127.0.0.1"    # Listen on localhost for FastAPI requests
-BRIDGE_PORT = 9999           # Port where FastAPI will connect
-BROKER_HOST = "0.0.0.0"      # Set to this PC's Pepper-reachable LAN IP if needed
-BROKER_PORT = 50006          # Fixed port Pepper uses for callbacks to this PC
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger('PepperBridge')
+
+TYPE_JSON = b'J'
+TYPE_PCM = b'P'
+TYPE_FINISH = b'F'
 
 class PepperBridge(object):
-    def __init__(self, ip, port, server_socket=None):
-        self.server_socket = server_socket
-        print("Connecting to Pepper at {}:{}...".format(ip, port))
-        
+    def __init__(self, pepper_ip, esp32_ip, host='127.0.0.1', port=9999,
+                 esp32_port=50005):
+        self.pepper = PepperController(pepper_ip)
+        self.mic = ESP32AudioClient(esp32_ip, esp32_port)
+        self.host, self.port = host, int(port)
+        self.server = None
+        self.client = None
+        self.write_lock = threading.Lock()
+        self.play_buffer = None
+        self.play_text = u''
+        self.MAX_PLAY_BYTES = 32 * 1024 * 1024
+
+    def send(self, kind, payload):
+        with self.write_lock:
+            if self.client is None:
+                return
+            send_frame(self.client, kind, payload)
+
+    def on_microphone_audio(self, data):
         try:
-            print("Starting NAOqi callback broker on {}:{}...".format(BROKER_HOST, BROKER_PORT))
-            self.broker = ALBroker("PepperBridgeBroker", BROKER_HOST, BROKER_PORT, ip, port)
-            self.pepper = PepperController(ip=ip, server_socket=server_socket)
-            print("Successfully connected to Pepper!")
-            self.pepper.do_macarena("I'm connected and ready to rumble!")
-            
-        except Exception as e:
-            print("Failed to connect to Pepper: {}".format(e))
-            if hasattr(self, "broker"):
-                self.broker.shutdown()
-            sys.exit(1)
+            self.send(b'A', data)
+        except Exception:
+            log.exception('Cannot forward microphone frame')
+            self.mic._stop.set()
 
-    def handle_command(self, payload, audio_socket=None):
-        """Parses incoming JSON payload from FastAPI and triggers Pepper API."""
+    def on_microphone_end(self, error):
         try:
-            data = json.loads(payload)
-            command = data.get("command")
-            target = data.get("target")
+            self.send(b'E', {'event': 'recording_stopped', 'error': error})
+        except Exception:
+            log.exception('Cannot deliver microphone completion')
 
-            print("Received command: {}".format(command))
+    def command(self, msg):
+        command = msg.get('command')
+        if command == 'record':
+            # Reply before audio starts, so the backend knows what follows.
+            self.send(b'J', {'status': 'recording_started',
+                             'sample_rate': 16000, 'channels': 1, 'format': 's16le'})
+            try:
+                self.mic.start(self.on_microphone_audio, self.on_microphone_end)
+            except Exception as exc:
+                self.send(b'E', {'event': 'recording_stopped', 'error': str(exc)})
+        elif command == 'stop_recording':
+            # Do NOT block main reader; on_end sends the recording_stopped event.
+            self.mic._stop.set()
+            self.mic._close_socket()
+        elif command == 'stream_audio':
+            if self.play_buffer is not None:
+                self.send(b'J', {'status': 'error', 'message': 'Playback already active'})
+                return
+            if msg.get('sample_rate') != 48000 or msg.get('channels') != 2 or msg.get('format') != 's16le':
+                self.send(b'J', {'status': 'error', 'message': 'Expected 48000 Hz stereo s16le'})
+                return
+            self.play_buffer = bytearray()
+            self.play_text = msg.get('text', u'')
+            self.send(b'J', {'status': 'ready_for_audio'})
+        elif command == 'speak':
+            try:
+                self.pepper.speak(msg.get('target', u''))
+                self.send(b'J', {'status': 'success'})
+            except Exception as exc:
+                log.exception('Speak failed')
+                self.send(b'J', {'status': 'error', 'message': str(exc)})
+        else:
+            self.send(b'J', {'status': 'error', 'message': 'Unknown command'})
 
-            if command == "speak":
-                print(u"Pepper is attemting to say: {}".format(target).encode("utf-8"))
-
-                try:
-                    self.pepper.speak(target)
-                    print("PepperController.speak completed")
-                    return {"status": "success", "message": "Speech completed"}
-                except Exception as e:
-                    print("Pepper speech failed: {}".format(e))
-                    return {"status": "error", "message": str(e)}
-
-            elif command == "record":
-                print("Pepper is starting audio recording for {} seconds...".format(data.get("duration", 5)))
-                duration = data.get("duration", 5)
-                self.pepper.record_audio(duration, audio_socket)
-                return {"status": "success", "message": "Recording started"}
-
-            elif command == "stream_audio":
-                # We return a unique status telling the handler to prepare for binary data
-                size = data.get("size", 0)
-                text = data.get("text", u"")
-                return {"status": "ready_for_audio", "size": size, "text": text}
-
-            else:
-                return {"status": "error", "message": "Unknown command"}
-
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-def client_handler(client_socket, bridge):
-    """Handles the persistent connection from FastAPI, supporting text & raw audio bytes."""
-    buffer_data = ""
-    while True:
+    def serve_client(self, client):
+        self.client = client
         try:
-            data = client_socket.recv(4096)
-            if not data:
-                break
-            
-            buffer_data += data
-            
-            # Check if a text command has finished arriving
-            if "\n" in buffer_data:
-                payload, buffer_data = buffer_data.split("\n", 1)
-                response = bridge.handle_command(payload, client_socket)
-                print("Response: {}".format(response).encode("utf-8"))
-                
-                # Check if the command we just processed was an audio alert
-                if response.get("status") == "ready_for_audio":
-                    expected_size = response.get("size", 0)
-                    
-                    # Send acknowledgment back to FastAPI so it knows it can dump the raw bytes
-                    client_socket.send(json.dumps({"status": "acknowledged"}) + "\n")
-                    
-                    # Collect the raw binary audio data chunk by chunk
-                    audio_buffer = ""
-                    # If some audio data accidentally slipped into our initial read buffer, grab it
-                    if buffer_data:
-                        audio_buffer = buffer_data
-                        buffer_data = ""
-                        
-                    while len(audio_buffer) < expected_size:
-                        chunk = client_socket.recv(min(expected_size - len(audio_buffer), 4096))
-                        if not chunk:
-                            raise Exception("Socket closed prematurely while reading audio bytes")
-                        audio_buffer += chunk
-                    
-                    # SUCCESS: We have the full audio stream in memory. Forward it to your Controller!
-                    print("Full audio file received ({} bytes). Playing...".format(len(audio_buffer)))
-                    # bridge.pepper.play_raw_audio_buffer(audio_buffer)
-                    text = tts_text(response.get("text", u""))
-                    print("Sending text to Pepper for speech: {}".format(text).encode("utf-8"))
-                    bridge.pepper.speak(text, audio_buffer)
-                    
-                    # Send a final success response back to FastAPI
-                    client_socket.send(json.dumps({"status": "success", "message": "Audio played"}) + "\n")
+            while True:
+                kind, payload = recv_frame(client)
+                if kind == b'J':
+                    self.command(decode_json(payload))
+                elif kind == b'P':
+                    if self.play_buffer is None:
+                        raise ValueError('Unexpected speaker PCM')
+                    if len(self.play_buffer) + len(payload) > self.MAX_PLAY_BYTES:
+                        raise ValueError('Speaker PCM exceeds buffer limit')
+                    self.play_buffer.extend(payload)
+                elif kind == b'F':
+                    if self.play_buffer is None:
+                        raise ValueError('Unexpected playback finish')
+                    samples = bytes(self.play_buffer)
+                    text = self.play_text
+                    self.play_buffer = None
+                    self.play_text = u''
+                    try:
+                        self.pepper.speak(text, audio_buffer=samples)
+                        self.send(b'J', {'status': 'success', 'message': 'Audio played'})
+                    except Exception as exc:
+                        log.exception('Speaker playback failed')
+                        self.send(b'J', {'status': 'error', 'message': str(exc)})
                 else:
-                    # Normal text command response (like posture change)
-                    client_socket.send(json.dumps(response) + "\n")
-                
-        except Exception as e:
-            print("Error handling socket client: {}".format(e))
-            break
-            
-    client_socket.close()
-    print("FastAPI connection closed.")
+                    raise ValueError('Invalid frame type')
+        except (EOFError, socket.error):
+            log.info('Backend disconnected')
+        except Exception:
+            log.exception('Backend connection error')
+        finally:
+            self.mic.stop()
+            self.client = None
+            self.play_buffer = None
 
+    def start(self):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind((self.host, self.port))
+        self.server.listen(1)
+        log.info('Bridge listening on %s:%s', self.host, self.port)
+        try:
+            while True:
+                client, address = self.server.accept()
+                client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.serve_client(client)
+                client.close()
+        finally:
+            self.mic.stop()
+            self.server.close()
 
-def start_server():
-    # Initialize the link to Pepper
-
-    # Initialize the local network socket server
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((BRIDGE_HOST, BRIDGE_PORT))
-    server.listen(5)
-    pepper = PepperBridge(PEPPER_IP, PEPPER_PORT)
-    print("Bridge server listening on {}:{}... Ready for FastAPI.".format(BRIDGE_HOST, BRIDGE_PORT))
-
+if __name__ == '__main__':
+    pepper = PepperBridge(
+        pepper_ip=os.environ.get('PEPPER_IP', '192.168.1.122'),
+        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'),
+        host=os.environ.get('BRIDGE_HOST', '127.0.0.1'),
+        port=int(os.environ.get('BRIDGE_PORT', '9999')),
+        esp32_port=int(os.environ.get('ESP32_PORT', '50005'))
+    )
     try:
-        while True:
-            client_sock, addr = server.accept()
-            print("FastAPI backend connected from: {}".format(str(addr)))
-
-            client_thread = threading.Thread(target=client_handler, args=(client_sock, pepper))
-            client_thread.daemon = True
-            client_thread.start()
+        pepper.start()
+        
     except KeyboardInterrupt:
-        print("\nShutting down bridge server.")
-    finally:
-        server.close()
-        if 'pepper' in locals() and hasattr(pepper, 'broker'):
-            pepper.broker.shutdown()
-
-def tts_text(text):
-    if not isinstance(text, unicode):
-        text = text.decode("utf-8")
-
-    replacements = {
-        u"\u2014": u"-",   # em dash
-        u"\u2013": u"-",   # en dash
-        u"\u2019": u"'",   # curly apostrophe
-        u"\u201c": u'"',
-        u"\u201d": u'"',
-    }
-
-    for source, replacement in replacements.items():
-        text = text.replace(source, replacement)
-
-    return unicodedata.normalize("NFKC", text)
-
-if __name__ == "__main__":
-    start_server()
+        log.info('Bridge shutting down')
+    except Exception:
+        log.exception('Bridge failed')

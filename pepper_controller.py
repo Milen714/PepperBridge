@@ -1,14 +1,15 @@
 from naoqi import ALProxy, ALBroker, ALModule
 import math
 import time
-import struct
+import logging
+from naoqi import ALProxy
 
-from sound_receiver_module import SoundReceiverModule
+log = logging.getLogger(__name__)
 
 
 class PepperController(object):
 
-    def __init__(self, ip, port=9559, server_socket=None):
+    def __init__(self, ip, port=9559):
         self.motion = ALProxy("ALMotion", ip, port)
         self.posture = ALProxy("ALRobotPosture", ip, port)
         self.tts = ALProxy("ALTextToSpeech", ip, port)
@@ -17,10 +18,8 @@ class PepperController(object):
         self.awareness = ALProxy("ALBasicAwareness", ip, port)
         self.tablet = ALProxy("ALTabletService", ip, port)
         self.audio = ALProxy("ALAudioDevice", ip, port)
-        # self.broker = ALProxy("ALBroker", ip, port)
-        self.sound_receiver = SoundReceiverModule(ip, port, server_socket)
+        
 
-        self.server_socket = server_socket
 
     def start_looking_at_user(self):
         self.awareness.setEngagementMode("FullyEngaged")
@@ -91,21 +90,11 @@ class PepperController(object):
         except Exception as e:
             print("Failed to execute hardware speaker playback: {}".format(e))
     
+    
     def open_tablet_webpage(self, url):
         self.tablet.showWebview(url)
 
-    def record_audio(self, duration_seconds=5, audio_socket=None):
-        """
-        Records audio from Pepper's microphones and streams it over a TCP socket.
-        """
-        try:
-            print("Starting audio recording for {} seconds...".format(duration_seconds))
-            self.sound_receiver.start_listening(audio_socket)
-            time.sleep(duration_seconds)
-            self.sound_receiver.stop_listening()
-            print("Audio recording completed.")
-        except Exception as e:
-            print("Error during audio recording: {}".format(e))
+    
 
     def do_macarena(self, text="EHH MACARENA!"):
         """

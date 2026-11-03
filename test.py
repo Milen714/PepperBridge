@@ -7,5 +7,6 @@ PEPPER_IP = "192.168.1.122"
 pepper = PepperController(PEPPER_IP)
 
 # pepper.greet("Hello.")
-pepper.do_macarena()
+# pepper.do_macarena()
 # pepper.open_tablet_webpage("http://192.168.1.246:5173/")
+print(pepper.is_person_present())

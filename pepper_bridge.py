@@ -48,9 +48,19 @@ class PepperBridge(object):
         except Exception:
             log.exception('Cannot deliver microphone completion')
 
+    def macarena(self):
+        try:
+            # self.pepper.stop()
+            self.pepper.do_macarena()
+            self.send(b'J', {'status': 'success'})
+        except Exception as exc:
+            log.exception('Macarena failed')
+            self.send(b'J', {'status': 'error', 'message': str(exc)})
+
     def command(self, msg):
         command = msg.get('command')
         if command == 'record':
+            self.pepper.set_led_state("listening")
             # Reply before audio starts, so the backend knows what follows.
             self.send(b'J', {'status': 'recording_started',
                              'sample_rate': 16000, 'channels': 1, 'format': 's16le'})
@@ -58,6 +68,7 @@ class PepperBridge(object):
                 self.mic.start(self.on_microphone_audio, self.on_microphone_end)
             except Exception as exc:
                 self.send(b'E', {'event': 'recording_stopped', 'error': str(exc)})
+                self.pepper.set_led_state("idle")
         elif command == 'stop_recording':
             # Do NOT block main reader; on_end sends the recording_stopped event.
             self.mic._stop.set()
@@ -74,11 +85,31 @@ class PepperBridge(object):
             self.send(b'J', {'status': 'ready_for_audio'})
         elif command == 'speak':
             try:
+                self.pepper.set_led_state("speaking")
                 self.pepper.speak(msg.get('target', u''))
                 self.send(b'J', {'status': 'success'})
             except Exception as exc:
                 log.exception('Speak failed')
                 self.send(b'J', {'status': 'error', 'message': str(exc)})
+
+        elif command == "person_present":
+            log.info("Checking for person presence...")
+            try:
+                # present = self.pepper.is_person_present()
+                present = True
+                log.info("Presence detection result: %s", present)
+
+                self.send(b'J', {
+                    'status': 'success',
+                    'present': present
+                })
+
+            except Exception as exc:
+                log.exception("Presence detection failed")
+                self.send(b'J', {
+                    'status': 'error',
+                    'message': str(exc)
+                })
         else:
             self.send(b'J', {'status': 'error', 'message': 'Unknown command'})
 
@@ -125,6 +156,7 @@ class PepperBridge(object):
         self.server.bind((self.host, self.port))
         self.server.listen(1)
         log.info('Bridge listening on %s:%s', self.host, self.port)
+        # self.macarena()
         try:
             while True:
                 client, address = self.server.accept()
@@ -136,15 +168,17 @@ class PepperBridge(object):
             self.server.close()
 
 if __name__ == '__main__':
-    pepper = PepperBridge(
-        pepper_ip=os.environ.get('PEPPER_IP', '192.168.1.122'),
-        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'),
+    bridge = PepperBridge(
+        # pepper_ip=os.environ.get('PEPPER_IP', '192.168.1.122'),
+        pepper_ip=os.environ.get('PEPPER_IP', 'milen.local'), #home
+        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
+        # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.17'),    #home
         host=os.environ.get('BRIDGE_HOST', '127.0.0.1'),
         port=int(os.environ.get('BRIDGE_PORT', '9999')),
         esp32_port=int(os.environ.get('ESP32_PORT', '50005'))
     )
     try:
-        pepper.start()
+        bridge.start()
         
     except KeyboardInterrupt:
         log.info('Bridge shutting down')

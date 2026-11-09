@@ -1,16 +1,21 @@
-import threading
-
-from naoqi import ALProxy, ALBroker, ALModule
-import math
-import time
 import logging
+import math
+import threading
+import time
+
 from naoqi import ALProxy
+
 from ear_led_animator import EarLedAnimator
 
 log = logging.getLogger(__name__)
 
 
-class PepperController(object):
+class PepperController:
+    ANIMATIONS = {
+        "wave": "animations/Stand/Gestures/Hey_1",
+        "nod": "animations/Stand/Gestures/Yes_1",
+        "think": "animations/Stand/Gestures/Thinking_1",
+    }
 
     def __init__(self, ip, port=9559):
         self.motion = ALProxy("ALMotion", ip, port)
@@ -21,19 +26,18 @@ class PepperController(object):
         self.awareness = ALProxy("ALBasicAwareness", ip, port)
         self.leds = ALProxy("ALLeds", ip, port)
         self.led_state = None
-        # self.tablet = ALProxy("ALTabletService", ip, port)
-        # self.audio = ALProxy("ALAudioDevice", ip, port)
+        self.tablet = ALProxy("ALTabletService", ip, port)
+        self.audio = ALProxy("ALAudioDevice", ip, port)
         self.memory = ALProxy("ALMemory", ip, port)
         self.people_perception = ALProxy("ALPeoplePerception", ip, port)
-        # self.ear_animator = EarLedAnimator(ip, port)
+        self.animation_player = ALProxy("ALAnimationPlayer", ip, port)
+        self.ear_animator = EarLedAnimator(ip, port)
 
         self._audio_stream_lock = threading.RLock()
         self._audio_stream_active = False
         self._audio_stream_sample_rate = None
         self._audio_stream_channels = None
         self._audio_stream_format = None
-        
-
 
     def start_looking_at_user(self):
         self.awareness.setEngagementMode("FullyEngaged")
@@ -46,12 +50,12 @@ class PepperController(object):
     def speak(self, text="Hello! Nice to meet you.", audio_buffer=None):
         try:
             self.motion.wakeUp()
-            
+
             # Start from a predictable position.
             self.posture.goToPosture("StandInit", 0.4)
             self.start_looking_at_user()
 
-            self.tts.setVolume(0.0)  
+            self.tts.setVolume(0.0)
             # Enable animated speech
             self.animated_speech.setBodyLanguageMode(2)  # 2 = Contextual mode
             self.speaking_movement.setEnabled(True)
@@ -74,70 +78,67 @@ class PepperController(object):
 
             raise
 
-
     def play_raw_audio_buffer(self, raw_bytes):
         """
-        Ingests binary PCM string and flushes it directly into Pepper's 
+        Ingests binary PCM string and flushes it directly into Pepper's
         loudspeakers over the remote network proxy.
         """
         try:
-            print("Processing raw remote byte stream for Pepper ({} bytes)...".format(len(raw_bytes)))
-            
+            print(
+                "Processing raw remote byte stream for Pepper ({} bytes)...".format(
+                    len(raw_bytes)
+                )
+            )
+
             # 16-bit Stereo has 4 bytes per frame (2 left, 2 right)
             # 16000Hz * 4 bytes = 64,000 bytes per second of audio
-            
-            # We chunk the audio into 4000 frames (16,000 bytes per push) 
+
+            # We chunk the audio into 4000 frames (16,000 bytes per push)
             # to remain strictly below the maximum 16384 network buffer limit.
-            chunk_size_frames = 4000 
+            chunk_size_frames = 4000
             chunk_size_bytes = chunk_size_frames * 4
-            
+
             print("Streaming native binary blocks directly over remote ALProxy...")
-            
+
             for i in range(0, len(raw_bytes), chunk_size_bytes):
-                byte_chunk = raw_bytes[i:i + chunk_size_bytes]
+                byte_chunk = raw_bytes[i : i + chunk_size_bytes]
                 frames_in_chunk = len(byte_chunk) // 4
-                
-                # FIX: In Python 2.7, casting a raw byte sequence to a plain string 
+
+                # FIX: In Python 2.7, casting a raw byte sequence to a plain string
                 # matches the internal remote proxy signature for raw binary buffers.
                 raw_string_payload = str(byte_chunk)
-                
+
                 # Execute remote audio call over Wi-Fi
-                self.audio.sendRemoteBufferToOutput(int(frames_in_chunk), raw_string_payload)
-                
+                self.audio.sendRemoteBufferToOutput(
+                    int(frames_in_chunk), raw_string_payload
+                )
+
             print("Playback streaming complete.")
-            
+
         except Exception:
             log.exception("Failed to play PCM through Pepper")
             raise
-    
-    
+
     def open_tablet_webpage(self, url):
         self.tablet.showWebview(url)
 
     def is_person_present(self, max_distance=2.0):
-        people = self.memory.getData(
-            "PeoplePerception/VisiblePeopleList"
-        ) or []
+        people = self.memory.getData("PeoplePerception/VisiblePeopleList") or []
 
         for person_id in people:
             try:
                 distance = self.memory.getData(
-                    "PeoplePerception/Person/{}/Distance".format(
-                        person_id
-                    )
+                    "PeoplePerception/Person/{}/Distance".format(person_id)
                 )
 
                 if distance <= max_distance:
                     return True
 
             except Exception:
-                log.exception(
-                    "Could not read person distance"
-                )
+                log.exception("Could not read person distance")
 
         return False
 
-    
     def set_led_state(self, state):
         """
         Sets the LED state of Pepper's ears and eyes.
@@ -170,7 +171,6 @@ class PepperController(object):
             self.motion.rest()
         except Exception:
             log.exception("Failed to stop ear LED animator")
-
 
     def start_audio_stream(self, sample_rate, channels, audio_format):
         """
@@ -222,9 +222,7 @@ class PepperController(object):
             if not self._audio_stream_active:
                 raise RuntimeError("No audio stream is active")
             bytes_per_sample = 2
-            bytes_per_frame = (
-                self._audio_stream_channels * bytes_per_sample
-            )
+            bytes_per_frame = self._audio_stream_channels * bytes_per_sample
             if len(pcm_bytes) % bytes_per_frame:
                 raise ValueError(
                     "PCM block is not frame-aligned: {} bytes".format(
@@ -239,7 +237,7 @@ class PepperController(object):
                 int(number_of_frames),
                 pcm_bytes,
             )
-        
+
     def finish_audio_stream(self):
         """
         Finish a PCM stream and restore Pepper's idle state.
@@ -266,7 +264,7 @@ class PepperController(object):
         with self._audio_stream_lock:
             if not self._audio_stream_active:
                 return
-            try:    
+            try:
                 log.info("Stopped Pepper audio stream")
             finally:
                 self._reset_audio_stream()
@@ -278,7 +276,19 @@ class PepperController(object):
         self._audio_stream_channels = None
         self._audio_stream_format = None
 
+    def execute_animation(self, action):
+        animation = self.ANIMATIONS.get(action)
 
+        if animation is None:
+            raise ValueError("Unsupported gesture: %s" % action)
+
+        # Blocking until the animation finishes.
+        self.animation_player.run(animation)
+
+        return {
+            "status": "success",
+            "action": action,
+        }
 
     def do_macarena(self, text="EHH MACARENA!"):
         """
@@ -287,63 +297,125 @@ class PepperController(object):
         """
         try:
             print("Starting Macarena Dance... Music cue!")
-            
+
             # 1. Wake up and stand up straight
             self.motion.wakeUp()
             self.posture.goToPosture("StandInit", 0.5)
             self.start_looking_at_user()
             self.tts.say(text)
-            
+
             # Define arm joints we want to move
-            left_arm = ["LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll", "LWristYaw"]
-            right_arm = ["RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll", "RWristYaw"]
+            left_arm = [
+                "LShoulderPitch",
+                "LShoulderRoll",
+                "LElbowYaw",
+                "LElbowRoll",
+                "LWristYaw",
+            ]
+            right_arm = [
+                "RShoulderPitch",
+                "RShoulderRoll",
+                "RElbowYaw",
+                "RElbowRoll",
+                "RWristYaw",
+            ]
             both_arms = left_arm + right_arm
-            
+
             # --- PHASE 1: Right Arm Out, Left Arm Out (Palm Down) ---
             print("Step 1: Arms Out...")
             # Right arm out straight
-            self.motion.angleInterpolationWithSpeed(right_arm, [0.0, -0.2, 0.0, 0.0, 0.0], 0.3)
+            self.motion.angleInterpolationWithSpeed(
+                right_arm, [0.0, -0.2, 0.0, 0.0, 0.0], 0.3
+            )
             time.sleep(0.5)
             # Left arm out straight
-            self.motion.angleInterpolationWithSpeed(left_arm, [0.0, 0.2, 0.0, 0.0, 0.0], 0.3)
+            self.motion.angleInterpolationWithSpeed(
+                left_arm, [0.0, 0.2, 0.0, 0.0, 0.0], 0.3
+            )
             time.sleep(0.8)
-            
+
             # --- PHASE 2: Flip Palms Up ---
             print("Step 2: Flip Palms Up...")
             # Rotate wrists 180 degrees (approx 1.5 radians)
-            self.motion.angleInterpolationWithSpeed(["LWristYaw", "RWristYaw"], [-1.5, 1.5], 0.2)
+            self.motion.angleInterpolationWithSpeed(
+                ["LWristYaw", "RWristYaw"], [-1.5, 1.5], 0.2
+            )
             time.sleep(0.8)
-            
+
             # --- PHASE 3: Right Hand to Left Shoulder, Left Hand to Right Shoulder ---
             print("Step 3: Cross Hands to Shoulders...")
             # Right hand to left shoulder
-            self.motion.angleInterpolationWithSpeed(right_arm, [math.radians(-40), math.radians(-10), math.radians(-80), math.radians(85), 0.0], 0.3)
+            self.motion.angleInterpolationWithSpeed(
+                right_arm,
+                [
+                    math.radians(-40),
+                    math.radians(-10),
+                    math.radians(-80),
+                    math.radians(85),
+                    0.0,
+                ],
+                0.3,
+            )
             time.sleep(0.5)
             # Left hand to right shoulder
-            self.motion.angleInterpolationWithSpeed(left_arm, [math.radians(-40), math.radians(10), math.radians(80), math.radians(-85), 0.0], 0.3)
+            self.motion.angleInterpolationWithSpeed(
+                left_arm,
+                [
+                    math.radians(-40),
+                    math.radians(10),
+                    math.radians(80),
+                    math.radians(-85),
+                    0.0,
+                ],
+                0.3,
+            )
             time.sleep(0.8)
-            
+
             # --- PHASE 4: Hands Behind Head ---
             print("Step 4: Hands Behind Head...")
             # Move elbows high and wrap hands behind neck/head
-            self.motion.angleInterpolationWithSpeed(both_arms, [
-                math.radians(-80), math.radians(20), math.radians(-40), math.radians(-60), 0.0, # Left
-                math.radians(-80), math.radians(-20), math.radians(40), math.radians(60), 0.0  # Right
-            ], 0.25)
+            self.motion.angleInterpolationWithSpeed(
+                both_arms,
+                [
+                    math.radians(-80),
+                    math.radians(20),
+                    math.radians(-40),
+                    math.radians(-60),
+                    0.0,  # Left
+                    math.radians(-80),
+                    math.radians(-20),
+                    math.radians(40),
+                    math.radians(60),
+                    0.0,  # Right
+                ],
+                0.25,
+            )
             time.sleep(0.8)
-            
+
             # --- PHASE 5: Hands to Hips ---
             print("Step 5: Hands to Hips...")
             # Bring arms down onto the hip joints
-            self.motion.angleInterpolationWithSpeed(both_arms, [
-                math.radians(60), math.radians(15), math.radians(-40), math.radians(-40), 0.0, # Left
-                math.radians(60), math.radians(-15), math.radians(40), math.radians(40), 0.0  # Right
-            ], 0.3)
+            self.motion.angleInterpolationWithSpeed(
+                both_arms,
+                [
+                    math.radians(60),
+                    math.radians(15),
+                    math.radians(-40),
+                    math.radians(-40),
+                    0.0,  # Left
+                    math.radians(60),
+                    math.radians(-15),
+                    math.radians(40),
+                    math.radians(40),
+                    0.0,  # Right
+                ],
+                0.3,
+            )
             time.sleep(0.8)
-            
+
             # --- PHASE 6: Hip Shake & The Jump (Base Rotation) ---
             print("Step 6: EHH MACARENA! *Jump/Turn*")
-            
+
             # Shake hips by rotating the spine briefly left and right
             for _ in range(2):
                 self.motion.setAngles("HipRoll", math.radians(5), 0.2)
@@ -351,19 +423,18 @@ class PepperController(object):
                 self.motion.setAngles("HipRoll", math.radians(-5), 0.2)
                 time.sleep(0.15)
             self.motion.setAngles("HipRoll", 0.0, 0.2)
-            
+
             # Simulate the 90-degree hop by rotating the wheel base!
             # moveTo(x_meters, y_meters, theta_radians)
             # 90 degrees = pi / 2 (approx 1.57 radians)
-            self.motion.moveTo(0.0, 0.0, 1.57) 
-            
+            self.motion.moveTo(0.0, 0.0, 1.57)
+
             # 7. Return to standard posture safely
             print("Dance cycle complete.")
             self.posture.goToPosture("StandInit", 0.4)
             self.stop_looking_at_user()
-            
+
         except Exception as e:
             print("Macarena execution crashed: {}".format(e))
             # Emergency safety reset to keep Pepper from locking up frozen in an odd shape
             self.posture.goToPosture("Stand", 0.5)
-        

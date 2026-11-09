@@ -1,0 +1,14 @@
+services:
+  pepper-bridge:
+    build: .
+    image: pepper-bridge
+    container_name: pepper-bridge
+    restart: unless-stopped
+    ports:
+      - "${BRIDGE_PORT:-9999}:9999"
+    environment:
+      PEPPER_IP: ${PEPPER_IP:-192.168.1.122}
+      ESP32_IP: ${ESP32_IP:-192.168.1.150}
+      ESP32_PORT: ${ESP32_PORT:-50005}
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: 9999

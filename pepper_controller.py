@@ -2,6 +2,7 @@ import logging
 import math
 import threading
 import time
+import random
 
 from naoqi import ALProxy
 
@@ -12,9 +13,45 @@ log = logging.getLogger(__name__)
 
 class PepperController:
     ANIMATIONS = {
-        "wave": "animations/Stand/Gestures/Hey_1",
-        "nod": "animations/Stand/Gestures/Yes_1",
-        "think": "animations/Stand/Gestures/Thinking_1",
+        "welcome": [
+            "animations/Stand/Gestures/Hey_1",
+            "animations/Stand/Gestures/Hey_3",
+            "animations/Stand/Gestures/Hey_4",
+        ],
+        "agree": [
+            "animations/Stand/Gestures/Yes_1",
+            "animations/Stand/Gestures/Yes_2",
+            "animations/Stand/Gestures/Yes_3",
+        ],
+        "think": [
+            "animations/Stand/Gestures/Thinking_1",
+            "animations/Stand/Gestures/Thinking_3",
+            "animations/Stand/Gestures/Thinking_4",
+        ],
+        "explain": [
+            "animations/Stand/Gestures/Explain_1",
+            "animations/Stand/Gestures/Explain_2",
+            "animations/Stand/Gestures/Explain_3",
+            "animations/Stand/Gestures/Explain_4",
+        ],
+        "uncertain": [
+            "animations/Stand/Gestures/IDontKnow_1",
+            "animations/Stand/Gestures/IDontKnow_2",
+        ],
+        "present_choice": [
+            "animations/Stand/Gestures/Choice_1",
+        ],
+        "disagree": [
+            "animations/Stand/Gestures/No_1",
+            "animations/Stand/Gestures/No_2",
+        ],
+        "celebrate": [
+            "animations/Stand/Emotions/Positive/Happy_4",
+            "animations/Stand/Gestures/Enthusiastic_4",
+        ],
+        "show_tablet": [
+            "animations/Stand/Gestures/ShowTablet_3",
+        ],
     }
 
     def __init__(self, ip, port=9559):
@@ -26,10 +63,10 @@ class PepperController:
         self.awareness = ALProxy("ALBasicAwareness", ip, port)
         self.leds = ALProxy("ALLeds", ip, port)
         self.led_state = None
-        self.tablet = ALProxy("ALTabletService", ip, port)
-        self.audio = ALProxy("ALAudioDevice", ip, port)
-        self.memory = ALProxy("ALMemory", ip, port)
-        self.people_perception = ALProxy("ALPeoplePerception", ip, port)
+        # self.tablet = ALProxy("ALTabletService", ip, port)
+        # self.audio = ALProxy("ALAudioDevice", ip, port)
+        # self.memory = ALProxy("ALMemory", ip, port)
+        # self.people_perception = ALProxy("ALPeoplePerception", ip, port)
         self.animation_player = ALProxy("ALAnimationPlayer", ip, port)
         self.ear_animator = EarLedAnimator(ip, port)
 
@@ -182,17 +219,13 @@ class PepperController:
             if self._audio_stream_active:
                 raise RuntimeError("An audio stream is already active")
             if sample_rate != 48000:
-                raise ValueError(
-                    "Expected 48000 Hz audio, got {}".format(sample_rate)
-                )
+                raise ValueError("Expected 48000 Hz audio, got {}".format(sample_rate))
             if channels != 2:
                 raise ValueError(
                     "Expected stereo audio, got {} channels".format(channels)
                 )
             if audio_format != "s16le":
-                raise ValueError(
-                    "Expected s16le audio, got {}".format(audio_format)
-                )
+                raise ValueError("Expected s16le audio, got {}".format(audio_format))
             self.motion.wakeUp()
             self.set_led_state("speaking")
             # Keep Pepper's speech synthesizer silent. Audio is supplied
@@ -225,9 +258,7 @@ class PepperController:
             bytes_per_frame = self._audio_stream_channels * bytes_per_sample
             if len(pcm_bytes) % bytes_per_frame:
                 raise ValueError(
-                    "PCM block is not frame-aligned: {} bytes".format(
-                        len(pcm_bytes)
-                    )
+                    "PCM block is not frame-aligned: {} bytes".format(len(pcm_bytes))
                 )
             number_of_frames = len(pcm_bytes) // bytes_per_frame
             # Python 2.7's remote ALProxy expects a plain str for binary data.
@@ -277,17 +308,20 @@ class PepperController:
         self._audio_stream_format = None
 
     def execute_animation(self, action):
-        animation = self.ANIMATIONS.get(action)
+        variants = self.ANIMATIONS.get(action)
 
-        if animation is None:
-            raise ValueError("Unsupported gesture: %s" % action)
+        if not variants:
+            raise ValueError("Unsupported animation: %s" % action)
 
-        # Blocking until the animation finishes.
+        animation = random.choice(variants)
+
+        self.motion.wakeUp()
         self.animation_player.run(animation)
 
         return {
             "status": "success",
             "action": action,
+            "animation": animation,
         }
 
     def do_macarena(self, text="EHH MACARENA!"):

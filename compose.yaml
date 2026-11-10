@@ -1,5 +1,6 @@
 services:
   pepper-bridge:
+    platform: linux/amd64  
     build: .
     image: pepper-bridge
     container_name: pepper-bridge

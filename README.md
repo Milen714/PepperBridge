@@ -1,8 +1,12 @@
 # Pepper Python Bridge
 
 The bridge runs under Python 2.7 because the NAOqi Python SDK uses Python 2.7.
-The Docker image extracts the bundled Linux x86_64 SDK archive and configures
-`PYTHONPATH`, `QI_SDK_PREFIX`, and `LD_LIBRARY_PATH` for it.
+The Docker image extracts the NAOqi Linux x86_64 SDK archive and configures
+`PYTHONPATH`, `QI_SDK_PREFIX`, and `LD_LIBRARY_PATH` for it. The SDK archive is
+not stored in Git because of its size; download it separately from the [SoftBank
+Robotics Developer Center](https://doc.aldebaran.com/2-8/dev/community_software.html#retrieving-software).
+Place `pynaoqi-python2.7-2.8.7.4-linux64-20210819_141148.tar.gz` in the project
+root before building. It is ignored by Git but remains available to Docker.
 
 ## Project layout
 
@@ -16,12 +20,12 @@ The Docker image extracts the bundled Linux x86_64 SDK archive and configures
 |-- pepper_controller.py       # Pepper/NAOqi control
 |-- esp32_audio_client.py      # ESP32 microphone connection
 |-- bridge_protocol.py         # Shared wire protocol
-`-- pynaoqi-...-linux64.tar.gz # Bundled NAOqi Python 2.7 SDK
+`-- .gitignore                 # Keeps the locally downloaded SDK out of Git
 ```
 
 ## Build
 
-Build from the repository root, where the SDK archive is present:
+Build from the repository root after placing the SDK archive there:
 
 ```sh
 docker build -t pepper-bridge .

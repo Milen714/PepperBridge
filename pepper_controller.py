@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 import threading
 import time
 import random
@@ -22,14 +23,19 @@ class PepperController:
         self.animated_speech = ALProxy("ALAnimatedSpeech", ip, port)
         self.speaking_movement = ALProxy("ALSpeakingMovement", ip, port)
         self.awareness = ALProxy("ALBasicAwareness", ip, port)
-        self.leds = ALProxy("ALLeds", ip, port)
+        self.leds_enabled = os.environ.get(
+            "PEPPER_LEDS_ENABLED", "true"
+        ).strip().lower() not in ("0", "false", "no", "off")
+        self.leds = ALProxy("ALLeds", ip, port) if self.leds_enabled else None
         self.led_state = None
         self.tablet = ALProxy("ALTabletService", ip, port)
         self.audio = ALProxy("ALAudioDevice", ip, port)
         self.memory = ALProxy("ALMemory", ip, port)
         self.people_perception = ALProxy("ALPeoplePerception", ip, port)
         self.animation_player = ALProxy("ALAnimationPlayer", ip, port)
-        self.ear_animator = EarLedAnimator(ip, port)
+        self.ear_animator = (
+            EarLedAnimator(ip, port) if self.leds_enabled else None
+        )
 
         self._audio_stream_lock = threading.RLock()
         self._audio_stream_active = False
@@ -150,6 +156,8 @@ class PepperController:
                 raise ValueError("Invalid LED state: {}".format(state))
 
             self.led_state = state
+            if not self.leds_enabled:
+                return
             self.ear_animator.set_state(state)
 
             if state == "listening":

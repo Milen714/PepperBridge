@@ -47,5 +47,13 @@ docker compose up --build
 
 The bridge is published on port `9999` by default. Set `BRIDGE_PORT` in `.env`
 to change the host port, or set `ESP32_PORT` to change the ESP32 server port.
+Set `PEPPER_LEDS_ENABLED=false` in `.env` when using Choregraphe's virtual
+robot, which does not provide LED hardware. The default is `true` for a real
+Pepper.
 The container must be able to reach Pepper on TCP port 9559 and the ESP32 audio
 server on its configured port. Stop it with `docker compose down`.
+
+```sh
+sudo docker run --privileged --rm tonistiigi/binfmt --install amd64
+sudo docker run --rm --platform linux/amd64 debian:bookworm-slim /bin/echo amd64-ok
+```

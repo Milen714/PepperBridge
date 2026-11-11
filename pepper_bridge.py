@@ -110,11 +110,13 @@ class PepperBridge:
                 self.send(b"J", {"status": "error", "message": str(exc)})
         elif command == "gesture":
             try:
-                log.info("Performing gesture: %s", msg.get("target"))
-                self.pepper.execute_animation(msg.get("target"))
-                self.send(b"J", {"status": "success"})
+                if self.play_buffer is not None:
+                    raise RuntimeError("Cannot gesture while audio is buffered")
+                log.info("Executing gesture: %s", msg.get("target"))
+                result = self.pepper.execute_animation(msg.get("target"))
+                self.send(b"J", result)
             except Exception as exc:
-                log.exception("Gesture failed")
+                log.exception("Gesture failed: %s", str(exc))
                 self.send(b"J", {"status": "error", "message": str(exc)})
 
         elif command == "person_present":
@@ -191,8 +193,8 @@ class PepperBridge:
 
 if __name__ == "__main__":
     bridge = PepperBridge(
-        # pepper_ip=os.environ.get("PEPPER_IP", "192.168.1.122"),
-        pepper_ip=os.environ.get("PEPPER_IP", "milen.local"),  # home
+        pepper_ip=os.environ.get("PEPPER_IP", "192.168.1.122"),
+        # pepper_ip=os.environ.get("PEPPER_IP", "milen.local"),  # home
         # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
         # esp32_ip=os.environ.get('ESP32_IP', '172.27.134.130'), #hotspot
         esp32_ip=os.environ.get("ESP32_IP", "peppermic.local"),  # .LOCAL

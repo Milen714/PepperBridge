@@ -3,6 +3,7 @@ import math
 import threading
 import time
 import random
+from pepper_animations import ANIMATIONS
 
 from naoqi import ALProxy
 
@@ -12,47 +13,7 @@ log = logging.getLogger(__name__)
 
 
 class PepperController:
-    ANIMATIONS = {
-        "welcome": [
-            "animations/Stand/Gestures/Hey_1",
-            "animations/Stand/Gestures/Hey_3",
-            "animations/Stand/Gestures/Hey_4",
-        ],
-        "agree": [
-            "animations/Stand/Gestures/Yes_1",
-            "animations/Stand/Gestures/Yes_2",
-            "animations/Stand/Gestures/Yes_3",
-        ],
-        "think": [
-            "animations/Stand/Gestures/Thinking_1",
-            "animations/Stand/Gestures/Thinking_3",
-            "animations/Stand/Gestures/Thinking_4",
-        ],
-        "explain": [
-            "animations/Stand/Gestures/Explain_1",
-            "animations/Stand/Gestures/Explain_2",
-            "animations/Stand/Gestures/Explain_3",
-            "animations/Stand/Gestures/Explain_4",
-        ],
-        "uncertain": [
-            "animations/Stand/Gestures/IDontKnow_1",
-            "animations/Stand/Gestures/IDontKnow_2",
-        ],
-        "present_choice": [
-            "animations/Stand/Gestures/Choice_1",
-        ],
-        "disagree": [
-            "animations/Stand/Gestures/No_1",
-            "animations/Stand/Gestures/No_2",
-        ],
-        "celebrate": [
-            "animations/Stand/Emotions/Positive/Happy_4",
-            "animations/Stand/Gestures/Enthusiastic_4",
-        ],
-        "show_tablet": [
-            "animations/Stand/Gestures/ShowTablet_3",
-        ],
-    }
+    ANIMATIONS = ANIMATIONS
 
     def __init__(self, ip, port=9559):
         self.motion = ALProxy("ALMotion", ip, port)
@@ -63,10 +24,10 @@ class PepperController:
         self.awareness = ALProxy("ALBasicAwareness", ip, port)
         self.leds = ALProxy("ALLeds", ip, port)
         self.led_state = None
-        # self.tablet = ALProxy("ALTabletService", ip, port)
-        # self.audio = ALProxy("ALAudioDevice", ip, port)
-        # self.memory = ALProxy("ALMemory", ip, port)
-        # self.people_perception = ALProxy("ALPeoplePerception", ip, port)
+        self.tablet = ALProxy("ALTabletService", ip, port)
+        self.audio = ALProxy("ALAudioDevice", ip, port)
+        self.memory = ALProxy("ALMemory", ip, port)
+        self.people_perception = ALProxy("ALPeoplePerception", ip, port)
         self.animation_player = ALProxy("ALAnimationPlayer", ip, port)
         self.ear_animator = EarLedAnimator(ip, port)
 
@@ -75,6 +36,9 @@ class PepperController:
         self._audio_stream_sample_rate = None
         self._audio_stream_channels = None
         self._audio_stream_format = None
+
+        self._animation_lock = threading.Lock()
+        self._animation_indices = {}
 
     def start_looking_at_user(self):
         self.awareness.setEngagementMode("FullyEngaged")
@@ -309,20 +273,24 @@ class PepperController:
 
     def execute_animation(self, action):
         variants = self.ANIMATIONS.get(action)
-
         if not variants:
-            raise ValueError("Unsupported animation: %s" % action)
-
-        animation = random.choice(variants)
-
-        self.motion.wakeUp()
-        self.animation_player.run(animation)
-
-        return {
-            "status": "success",
-            "action": action,
-            "animation": animation,
-        }
+            raise ValueError("Unsupported gesture: %s" % action)
+        if not self._animation_lock.acquire(False):
+            raise RuntimeError("Gesture already in progress")
+        try:
+            # Avoid arm motion during incremental PCM playback.
+            with self._audio_stream_lock:
+                if self._audio_stream_active:
+                    raise RuntimeError("Audio stream active")
+            index = self._animation_indices.get(action, 0)
+            animation = variants[index % len(variants)]
+            # Advance only after success; deterministic and no immediate repeats.
+            # self.motion.wakeUp()
+            self.animation_player.run(animation)
+            self._animation_indices[action] = index + 1
+            return {"status": "success", "action": action, "animation": animation}
+        finally:
+            self._animation_lock.release()
 
     def do_macarena(self, text="EHH MACARENA!"):
         """

@@ -17,9 +17,7 @@ COPY docker/extract_sdk.py /tmp/extract_sdk.py
 # own libpython2.7, which must not override that runtime through LD_LIBRARY_PATH.
 RUN python2.7 /tmp/extract_sdk.py /tmp/naoqi-sdk.tar.gz "${QI_SDK_PREFIX}"
 
-COPY animated_speech.py bridge_protocol.py bridgewithstream.py ear_led_animator.py \
-     esp32_audio_client.py explore.py localize.py pepper_bridge.py pepper_controller.py \
-     relocalize.py test.py ${APP_DIR}/
+COPY *.py ${APP_DIR}/
 COPY docker/entrypoint.sh /usr/local/bin/pepper-bridge-entrypoint
 
 EXPOSE 9999

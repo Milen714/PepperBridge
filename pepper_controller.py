@@ -300,6 +300,23 @@ class PepperController:
         finally:
             self._animation_lock.release()
 
+    def execute_random_animation(self):
+        action = random.choice(list(self.ANIMATIONS.keys()))
+        return self.execute_animation(action)
+
+    def test_animation_list(self):
+        """
+        Test all animations in the ANIMATIONS dictionary sequentially.
+        Useful for verifying that all animations are loaded and playable.
+        """
+        for action, variants in self.ANIMATIONS.items():
+            print("Testing animation: {}".format(action))
+            for variant in variants:
+                print("Playing variant: {}".format(variant))
+                self.animation_player.run(variant)
+                time.sleep(1)  # Pause between variants
+            time.sleep(2)  # Pause between actions
+
     def do_macarena(self, text="EHH MACARENA!"):
         """
         Executes the classic Macarena dance choreography safely.

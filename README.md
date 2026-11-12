@@ -18,7 +18,7 @@ root before building. It is ignored by Git but remains available to Docker.
 |   `-- entrypoint.sh          # Starts the bridge with Python 2.7
 |-- pepper_bridge.py           # TCP bridge entry point
 |-- pepper_controller.py       # Pepper/NAOqi control
-|-- esp32_audio_client.py      # ESP32 microphone connection
+|-- esp32_client.py            # ESP32 microphone and mmWave radar client
 |-- bridge_protocol.py         # Shared wire protocol
 `-- .gitignore                 # Keeps the locally downloaded SDK out of Git
 ```
@@ -58,6 +58,13 @@ robot, which does not provide LED hardware. The default is `true` for a real
 Pepper.
 The container must be able to reach Pepper on TCP port 9559 and the ESP32 audio
 server on its configured port. Stop it with `docker compose down`.
+
+`ESP32Client` in `esp32_client.py` uses the same ESP32 for both sensors:
+`read_radar_status()` fetches the `/radar` JSON endpoint on HTTP port 80, and
+`person_present()` returns its `inRange` value (the firmware's 45–225 cm
+capture zone). `start_microphone_recording(on_audio, on_end)` streams microphone PCM over the
+configured TCP port, and `stop()` closes that stream. `ESP32AudioClient` is
+retained as a backwards-compatible alias.
 
 ```sh
 sudo docker run --privileged --rm tonistiigi/binfmt --install amd64

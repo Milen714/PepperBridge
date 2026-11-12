@@ -5,7 +5,7 @@ import socket
 import threading
 
 from bridge_protocol import decode_json, recv_frame, send_frame
-from esp32_audio_client import ESP32AudioClient
+from esp32_client import ESP32Client
 from pepper_controller import PepperController
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +21,7 @@ class PepperBridge:
         self, pepper_ip, esp32_ip, host="127.0.0.1", port=9999, esp32_port=50005
     ):
         self.pepper = PepperController(pepper_ip)
-        self.mic = ESP32AudioClient(esp32_ip, esp32_port)
+        self.esp32 = ESP32Client(esp32_ip, esp32_port)
         self.host, self.port = host, int(port)
         self.server = None
         self.client = None
@@ -41,7 +41,7 @@ class PepperBridge:
             self.send(b"A", data)
         except Exception:
             log.exception("Cannot forward microphone frame")
-            self.mic._stop.set()
+            self.esp32.stop_microphone_recording()
 
     def on_microphone_end(self, error):
         try:
@@ -73,14 +73,15 @@ class PepperBridge:
                 },
             )
             try:
-                self.mic.start(self.on_microphone_audio, self.on_microphone_end)
+                self.esp32.start_microphone_recording(
+                    self.on_microphone_audio, self.on_microphone_end
+                )
             except Exception as exc:
                 self.send(b"E", {"event": "recording_stopped", "error": str(exc)})
                 self.pepper.set_led_state("idle")
         elif command == "stop_recording":
             # Do NOT block main reader; on_end sends the recording_stopped event.
-            self.mic._stop.set()
-            self.mic._close_socket()
+            self.esp32.stop_microphone_recording()
         elif command == "stream_audio":
             if self.play_buffer is not None:
                 self.send(
@@ -123,7 +124,7 @@ class PepperBridge:
             log.info("Checking for person presence...")
             try:
                 # present = self.pepper.is_person_present()
-                present = True
+                present = self.esp32.person_present()
                 log.info("Presence detection result: %s", present)
 
                 self.send(b"J", {"status": "success", "present": present})
@@ -169,7 +170,7 @@ class PepperBridge:
         except Exception:
             log.exception("Backend connection error")
         finally:
-            self.mic.stop()
+            self.esp32.stop()
             self.client = None
             self.play_buffer = None
 
@@ -187,7 +188,7 @@ class PepperBridge:
                 self.serve_client(client)
                 client.close()
         finally:
-            self.mic.stop()
+            self.esp32.stop()
             self.server.close()
 
 

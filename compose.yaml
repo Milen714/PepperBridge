@@ -1,10 +1,21 @@
 services:
+  # Registers amd64 emulation with the host kernel on ARM64 systems such as Pi.
+  # This needs privileged access and completes before the bridge starts.
+  binfmt:
+    image: tonistiigi/binfmt:latest
+    privileged: true
+    command: ["--install", "amd64"]
+    restart: "no"
+
   pepper-bridge:
-    platform: linux/amd64  
+    platform: linux/amd64
     build: .
     image: pepper-bridge
     container_name: pepper-bridge
     restart: unless-stopped
+    depends_on:
+      binfmt:
+        condition: service_completed_successfully
     ports:
       - "${BRIDGE_PORT:-9999}:9999"
     environment:

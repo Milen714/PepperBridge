@@ -61,7 +61,7 @@ class PepperBridge:
     def command(self, msg):
         command = msg.get("command")
         if command == "record":
-            # self.pepper.set_led_state("listening")
+            self.pepper.set_led_state("listening")
             # Reply before audio starts, so the backend knows what follows.
             self.send(
                 b"J",
@@ -76,7 +76,7 @@ class PepperBridge:
                 self.mic.start(self.on_microphone_audio, self.on_microphone_end)
             except Exception as exc:
                 self.send(b"E", {"event": "recording_stopped", "error": str(exc)})
-                # self.pepper.set_led_state("idle")
+                self.pepper.set_led_state("idle")
         elif command == "stop_recording":
             # Do NOT block main reader; on_end sends the recording_stopped event.
             self.mic._stop.set()
@@ -102,7 +102,7 @@ class PepperBridge:
             self.send(b"J", {"status": "ready_for_audio"})
         elif command == "speak":
             try:
-                # self.pepper.set_led_state("speaking")
+                self.pepper.set_led_state("speaking")
                 self.pepper.speak(msg.get("target", ""))
                 self.send(b"J", {"status": "success"})
             except Exception as exc:
@@ -195,9 +195,9 @@ if __name__ == "__main__":
     bridge = PepperBridge(
         pepper_ip=os.environ.get("PEPPER_IP", "192.168.1.122"),
         # pepper_ip=os.environ.get("PEPPER_IP", "milen.local"),  # home
-        # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
+        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
         # esp32_ip=os.environ.get('ESP32_IP', '172.27.134.130'), #hotspot
-        esp32_ip=os.environ.get("ESP32_IP", "peppermic.local"),  # .LOCAL
+        # esp32_ip=os.environ.get("ESP32_IP", "peppermic.local"),  # .LOCAL
         # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.17'),    #home
         host=os.environ.get("BRIDGE_HOST", "127.0.0.1"),
         port=int(os.environ.get("BRIDGE_PORT", "9999")),

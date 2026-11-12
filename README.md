@@ -42,8 +42,14 @@ docker build --build-arg NAOQI_SDK_ARCHIVE=your-sdk.tar.gz -t pepper-bridge .
 Set `PEPPER_IP` and `ESP32_IP` in `.env` (copy `.env.example` as a starting point):
 
 ```sh
-docker compose up --build
+docker compose up -d --build
 ```
+
+On ARM64 hosts, Compose first runs a privileged one-shot `binfmt` service to
+register amd64 emulation with the host kernel. The bridge starts after this
+registration completes. This is needed because the bundled NAOqi SDK is Linux
+x86_64. For one-off `docker compose run` commands, do not pass `--no-deps`, so
+Compose can run the registration service first.
 
 The bridge is published on port `9999` by default. Set `BRIDGE_PORT` in `.env`
 to change the host port, or set `ESP32_PORT` to change the ESP32 server port.

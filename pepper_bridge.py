@@ -3,6 +3,7 @@ import logging
 import os
 import socket
 import threading
+from rpi_i2s_mic import I2SMicrophone
 
 from bridge_protocol import decode_json, recv_frame, send_frame
 from esp32_client import ESP32Client
@@ -22,6 +23,7 @@ class PepperBridge:
     ):
         self.pepper = PepperController(pepper_ip)
         self.esp32 = ESP32Client(esp32_ip, esp32_port)
+        self.audio_client = None
         self.host, self.port = host, int(port)
         self.server = None
         self.client = None
@@ -29,6 +31,22 @@ class PepperBridge:
         self.play_buffer = None
         self.play_text = ""
         self.MAX_PLAY_BYTES = 32 * 1024 * 1024
+
+        audio_source = os.environ.get("AUDIO_SOURCE", "esp32").strip().lower()
+
+        if audio_source == "rpi_i2s":
+            raw_idx = os.environ.get("I2S_MIC_DEVICE_INDEX", "").strip()
+            device_index = int(raw_idx) if raw_idx else None
+            mic_gain = float(os.environ.get("I2S_MIC_GAIN", "2.0"))
+            self.audio_client = I2SMicrophone(
+                sample_rate=16000,
+                chunk_size=512,
+                device_index=device_index,
+                gain=mic_gain,
+            )
+        else:
+            self.audio_client = self.esp32
+        
 
     def send(self, kind, payload):
         with self.write_lock:
@@ -41,7 +59,7 @@ class PepperBridge:
             self.send(b"A", data)
         except Exception:
             log.exception("Cannot forward microphone frame")
-            self.esp32.stop_microphone_recording()
+            self.audio_client.stop_microphone_recording()
 
     def on_microphone_end(self, error):
         try:
@@ -73,7 +91,7 @@ class PepperBridge:
                 },
             )
             try:
-                self.esp32.start_microphone_recording(
+                self.audio_client.start_microphone_recording(
                     self.on_microphone_audio, self.on_microphone_end
                 )
             except Exception as exc:
@@ -81,7 +99,7 @@ class PepperBridge:
                 self.pepper.set_led_state("idle")
         elif command == "stop_recording":
             # Do NOT block main reader; on_end sends the recording_stopped event.
-            self.esp32.stop_microphone_recording()
+            self.audio_client.stop_microphone_recording()
         elif command == "stream_audio":
             if self.play_buffer is not None:
                 self.send(
@@ -124,7 +142,8 @@ class PepperBridge:
             log.info("Checking for person presence...")
             try:
                 # present = self.pepper.is_person_present()
-                present = self.esp32.person_present()
+                # present = self.esp32.person_present()
+                present = True  # For testing purposes, always return True
                 log.info("Presence detection result: %s", present)
 
                 self.send(b"J", {"status": "success", "present": present})
@@ -170,7 +189,7 @@ class PepperBridge:
         except Exception:
             log.exception("Backend connection error")
         finally:
-            self.esp32.stop()
+            self.audio_client.stop()
             self.client = None
             self.play_buffer = None
 
@@ -188,18 +207,18 @@ class PepperBridge:
                 self.serve_client(client)
                 client.close()
         finally:
-            self.esp32.stop()
+            self.audio_client.stop()
             self.server.close()
 
 
 if __name__ == "__main__":
     bridge = PepperBridge(
-        pepper_ip=os.environ.get("PEPPER_IP", "192.168.1.122"),
-        # pepper_ip=os.environ.get("PEPPER_IP", "milen.local"),  # home
-        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
+        # pepper_ip=os.environ.get("PEPPER_IP", "192.168.1.122"),
+        pepper_ip=os.environ.get("PEPPER_IP", "milen.local"),  # home
+        # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.93'), #alkmaar
         # esp32_ip=os.environ.get('ESP32_IP', '172.27.134.130'), #hotspot
         # esp32_ip=os.environ.get("ESP32_IP", "peppermic.local"),  # .LOCAL
-        # esp32_ip=os.environ.get('ESP32_IP', '192.168.1.17'),    #home
+        esp32_ip=os.environ.get('ESP32_IP', '192.168.1.17'),    #home
         host=os.environ.get("BRIDGE_HOST", "127.0.0.1"),
         port=int(os.environ.get("BRIDGE_PORT", "9999")),
         esp32_port=int(os.environ.get("ESP32_PORT", "50005")),

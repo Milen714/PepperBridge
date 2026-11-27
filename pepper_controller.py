@@ -28,14 +28,14 @@ class PepperController:
         ).strip().lower() not in ("0", "false", "no", "off")
         self.leds = ALProxy("ALLeds", ip, port) if self.leds_enabled else None
         self.led_state = None
-        self.tablet = ALProxy("ALTabletService", ip, port)
-        self.audio = ALProxy("ALAudioDevice", ip, port)
+        # self.tablet = ALProxy("ALTabletService", ip, port)
+        # self.audio = ALProxy("ALAudioDevice", ip, port)
         self.memory = ALProxy("ALMemory", ip, port)
         self.people_perception = ALProxy("ALPeoplePerception", ip, port)
         self.animation_player = ALProxy("ALAnimationPlayer", ip, port)
-        self.ear_animator = (
-            EarLedAnimator(ip, port) if self.leds_enabled else None
-        )
+        # self.ear_animator = (
+        #     EarLedAnimator(ip, port) if self.leds_enabled else None
+        # )
 
         self._audio_stream_lock = threading.RLock()
         self._audio_stream_active = False

@@ -3,7 +3,6 @@ import logging
 import os
 import socket
 import threading
-from rpi_i2s_mic import I2SMicrophone
 
 from bridge_protocol import decode_json, recv_frame, send_frame
 from esp32_client import ESP32Client
@@ -33,17 +32,11 @@ class PepperBridge:
         self.MAX_PLAY_BYTES = 32 * 1024 * 1024
 
         audio_source = os.environ.get("AUDIO_SOURCE", "esp32").strip().lower()
+        audio_host = os.environ.get("AUDIO_HOST", "").strip()
+        audio_port = int(os.environ.get("AUDIO_PORT", esp32_port))
 
-        if audio_source == "rpi_i2s":
-            raw_idx = os.environ.get("I2S_MIC_DEVICE_INDEX", "").strip()
-            device_index = int(raw_idx) if raw_idx else None
-            mic_gain = float(os.environ.get("I2S_MIC_GAIN", "2.0"))
-            self.audio_client = I2SMicrophone(
-                sample_rate=16000,
-                chunk_size=512,
-                device_index=device_index,
-                gain=mic_gain,
-            )
+        if audio_host and audio_host != esp32_ip:
+            self.audio_client = ESP32Client(audio_host, audio_port)
         else:
             self.audio_client = self.esp32
         

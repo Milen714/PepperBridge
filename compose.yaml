@@ -22,6 +22,8 @@ services:
       - "/dev/snd:/dev/snd"
     group_add:
       - "audio"
+    volumes:
+      - ".:/opt/pepper-bridge"
     environment:
       PEPPER_IP: ${PEPPER_IP:-192.168.1.122}
       ESP32_IP: ${ESP32_IP:-192.168.1.150}
